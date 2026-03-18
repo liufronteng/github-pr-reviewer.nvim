@@ -4818,8 +4818,14 @@ function M.show_pr_info()
         -- 'o' to open first failed check in browser
         vim.keymap.set("n", "o", function()
           if failed_urls[1] then
-            local open_cmd = vim.fn.has("mac") == 1 and "open" or (vim.fn.has("win32") == 1 and "start" or "xdg-open")
-            vim.fn.jobstart(open_cmd .. " " .. vim.fn.shellescape(failed_urls[1].url), { detach = true })
+            local url = failed_urls[1].url
+            if vim.fn.has("mac") == 1 then
+              vim.fn.jobstart("open " .. vim.fn.shellescape(url), { detach = true })
+            elseif vim.fn.has("win32") == 1 then
+              vim.fn.jobstart('cmd /c start "" ' .. vim.fn.shellescape(url), { detach = true })
+            else
+              vim.fn.jobstart("xdg-open " .. vim.fn.shellescape(url), { detach = true })
+            end
             vim.notify("Opening: " .. failed_urls[1].name, vim.log.levels.INFO)
           end
         end, { buffer = buf, nowait = true, desc = "Open failed check in browser" })
