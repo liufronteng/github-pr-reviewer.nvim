@@ -399,7 +399,9 @@ local function get_changed_lines_for_file(file_path, status, callback)
     -- For new/untracked files, compare with /dev/null
     cmd = string.format("git diff --unified=0 --no-index /dev/null -- %s", vim.fn.shellescape(file_path))
   else
-    cmd = string.format("git diff --unified=0 HEAD -- %s", vim.fn.shellescape(file_path))
+    local merge_base = vim.g.pr_review_merge_base
+    local base_ref = merge_base and merge_base or "HEAD"
+    cmd = string.format("git diff --unified=0 %s -- %s", base_ref, vim.fn.shellescape(file_path))
   end
   vim.fn.jobstart(cmd, {
     stdout_buffered = true,
@@ -460,7 +462,9 @@ get_inline_diff = function(file_path, status, callback)
   if status == "A" or status == "N" then
     cmd = string.format("git diff --unified=0 --no-index /dev/null -- %s", vim.fn.shellescape(file_path))
   else
-    cmd = string.format("git diff --unified=0 HEAD -- %s", vim.fn.shellescape(file_path))
+    local merge_base = vim.g.pr_review_merge_base
+    local base_ref = merge_base and merge_base or "HEAD"
+    cmd = string.format("git diff --unified=0 %s -- %s", base_ref, vim.fn.shellescape(file_path))
   end
 
   vim.fn.jobstart(cmd, {
@@ -666,9 +670,15 @@ local function create_split_view(current_bufnr, file_path)
   -- Try to get base version of the file
   -- Build list of attempts to find the base version
   local base_branch = vim.g.pr_review_base_branch
+  local merge_base = vim.g.pr_review_merge_base
   local attempts = {}
 
-  -- If we have base_branch, try it first
+  -- Prefer merge-base (exact common ancestor, matches GitHub's diff base)
+  if merge_base then
+    table.insert(attempts, string.format("%s:%s", merge_base, file_path))
+  end
+
+  -- If we have base_branch, try it as fallback
   if base_branch then
     table.insert(attempts, string.format("origin/%s:%s", base_branch, file_path))
     table.insert(attempts, string.format("%s:%s", base_branch, file_path))
@@ -1174,8 +1184,9 @@ local function open_file_safe(file, split_cmd)
       vim.api.nvim_set_current_buf(existing_buf)
       -- Don't auto-mark as viewed - user should explicitly mark with mark_as_viewed_key
     else
-      -- Open deleted file from HEAD
-      local cmd = string.format("git show HEAD:%s", vim.fn.shellescape(file.path))
+      -- Open deleted file from merge_base (the PR's base commit, matching GitHub's view)
+      local del_ref = vim.g.pr_review_merge_base or "HEAD"
+      local cmd = string.format("git show %s:%s", del_ref, vim.fn.shellescape(file.path))
       vim.fn.jobstart(cmd, {
         stdout_buffered = true,
         on_stdout = function(_, data)
@@ -4974,7 +4985,7 @@ function M._do_start_review(pr)
         pr.head_branch or "nil",
         pr.head_repo_owner or "nil",
         pr.head_repo_url or "nil"))
-      git.soft_merge(pr.head_branch, pr.head_repo_owner, pr.head_repo_url, function(merge_ok, merge_err, has_conflicts)
+      git.soft_merge(pr.head_branch, pr.head_repo_owner, pr.head_repo_url, function(merge_ok, merge_err, merge_base)
         if not merge_ok then
           vim.notify("Error during soft merge: " .. (merge_err or "unknown"), vim.log.levels.ERROR)
           return
@@ -4982,21 +4993,15 @@ function M._do_start_review(pr)
 
         vim.g.pr_review_number = pr.number
         vim.g.pr_review_base_branch = pr.base_branch
+        vim.g.pr_review_merge_base = merge_base
 
         -- Start polling for remote updates
         start_update_polling()
 
-        if has_conflicts then
-          vim.notify(
-            string.format("⚠️  PR #%s has merge conflicts. Review will show conflicted state.", pr.number),
-            vim.log.levels.WARN
-          )
-        else
-          vim.notify(
-            string.format("✅ Ready to review PR #%s: %s", pr.number, pr.title),
-            vim.log.levels.INFO
-          )
-        end
+        vim.notify(
+          string.format("✅ Ready to review PR #%s: %s", pr.number, pr.title),
+          vim.log.levels.INFO
+        )
 
         git.get_modified_files_with_lines(function(files, hunks)
           if files and #files > 0 then
@@ -5391,7 +5396,7 @@ function M._do_review_pr_with_branch(pr)
         pr.head_branch or "nil",
         pr.head_repo_owner or "nil",
         pr.head_repo_url or "nil"))
-      git.soft_merge(pr.head_branch, pr.head_repo_owner, pr.head_repo_url, function(merge_ok, merge_err, has_conflicts)
+      git.soft_merge(pr.head_branch, pr.head_repo_owner, pr.head_repo_url, function(merge_ok, merge_err, merge_base)
         if not merge_ok then
           vim.notify("Error during soft merge: " .. (merge_err or "unknown"), vim.log.levels.ERROR)
           return
@@ -5399,21 +5404,15 @@ function M._do_review_pr_with_branch(pr)
 
         vim.g.pr_review_number = pr.number
         vim.g.pr_review_base_branch = pr.base_branch
+        vim.g.pr_review_merge_base = merge_base
 
         -- Start polling for remote updates
         start_update_polling()
 
-        if has_conflicts then
-          vim.notify(
-            string.format("⚠️  PR #%s has merge conflicts. Review will show conflicted state.", pr.number),
-            vim.log.levels.WARN
-          )
-        else
-          vim.notify(
-            string.format("✅ Ready to review PR #%s: %s", pr.number, pr.title),
-            vim.log.levels.INFO
-          )
-        end
+        vim.notify(
+          string.format("✅ Ready to review PR #%s: %s", pr.number, pr.title),
+          vim.log.levels.INFO
+        )
 
         git.get_modified_files_with_lines(function(files)
           if files and #files > 0 then
@@ -5515,15 +5514,12 @@ function M.refresh_pr_branch()
                   on_exit = function()
                     vim.schedule(function()
                       -- Re-do the soft merge with the updated PR branch
-                      git.soft_merge(head_branch, head_repo_owner, head_repo_url, function(merge_ok, merge_err, has_conflicts)
+                      git.soft_merge(head_branch, head_repo_owner, head_repo_url, function(merge_ok, merge_err, merge_base)
                         if not merge_ok then
                           vim.notify("❌ Failed to re-merge PR: " .. (merge_err or "unknown"), vim.log.levels.ERROR)
                           return
                         end
-
-                        if has_conflicts then
-                          vim.notify("⚠️  PR has merge conflicts after refresh.", vim.log.levels.WARN)
-                        end
+                        vim.g.pr_review_merge_base = merge_base
 
                         -- Clear all cached data
                         M._buffer_changes = {}
