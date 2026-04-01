@@ -4732,6 +4732,9 @@ function M.show_pr_info()
         "",
       })
 
+      -- Prepare for CI checks (declare outside block for keymap access)
+      local failed_urls = {}
+
       -- Add CI checks
       if #ci_checks > 0 then
         table.insert(lines, "## CI Checks")
@@ -4752,6 +4755,9 @@ function M.show_pr_info()
             icon = check_fail_icon
             failed = failed + 1
             table.insert(failed_jobs, check.name)
+            if check.detailsUrl then
+              table.insert(failed_urls, { name = check.name, url = check.detailsUrl })
+            end
           else
             icon = check_pending_icon
             pending = pending + 1
@@ -4767,6 +4773,11 @@ function M.show_pr_info()
 
         if failed > 0 then
           table.insert(lines, string.format("%s **Failed jobs:** %s", check_fail_icon, table.concat(failed_jobs, ", ")))
+          -- Add instructions to view details
+          if #failed_urls > 0 then
+            table.insert(lines, "")
+            table.insert(lines, "*Press `o` to open failed check in browser, `y` to copy URL*")
+          end
         end
 
         if pending > 0 then
@@ -4812,6 +4823,32 @@ function M.show_pr_info()
 
       vim.keymap.set("n", "q", close_window, { buffer = buf, nowait = true })
       vim.keymap.set("n", "<Esc>", close_window, { buffer = buf, nowait = true })
+
+      -- Add keymaps for failed checks interaction
+      if #failed_urls > 0 then
+        -- 'o' to open first failed check in browser
+        vim.keymap.set("n", "o", function()
+          if failed_urls[1] then
+            local url = failed_urls[1].url
+            if vim.fn.has("mac") == 1 then
+              vim.fn.jobstart("open " .. vim.fn.shellescape(url), { detach = true })
+            elseif vim.fn.has("win32") == 1 then
+              vim.fn.jobstart('cmd /c start "" ' .. vim.fn.shellescape(url), { detach = true })
+            else
+              vim.fn.jobstart("xdg-open " .. vim.fn.shellescape(url), { detach = true })
+            end
+            vim.notify("Opening: " .. failed_urls[1].name, vim.log.levels.INFO)
+          end
+        end, { buffer = buf, nowait = true, desc = "Open failed check in browser" })
+
+        -- 'y' to copy first failed check URL
+        vim.keymap.set("n", "y", function()
+          if failed_urls[1] then
+            vim.fn.setreg("+", failed_urls[1].url)
+            vim.notify("Copied URL for: " .. failed_urls[1].name, vim.log.levels.INFO)
+          end
+        end, { buffer = buf, nowait = true, desc = "Copy failed check URL" })
+      end
 
       -- Auto-close if user leaves the buffer (e.g., switches windows)
       vim.api.nvim_create_autocmd("BufLeave", {
