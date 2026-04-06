@@ -597,10 +597,13 @@ function M.clear_cache()
 end
 
 function M.get_current_user(callback)
+  local callback_called = false
+
   vim.fn.jobstart("gh api user --jq '.login'", {
     stdout_buffered = true,
     on_stdout = function(_, data)
       if data and data[1] and data[1] ~= "" then
+        callback_called = true
         vim.schedule(function()
           callback(data[1]:gsub("%s+", ""), nil)
         end)
@@ -608,8 +611,16 @@ function M.get_current_user(callback)
     end,
     on_stderr = function(_, data)
       if data and data[1] and data[1] ~= "" then
+        callback_called = true
         vim.schedule(function()
           callback(nil, table.concat(data, "\n"))
+        end)
+      end
+    end,
+    on_exit = function(_, code)
+      if not callback_called then
+        vim.schedule(function()
+          callback(nil, "Failed to get current user" .. (code ~= 0 and (" (exit code " .. code .. ")") or ""))
         end)
       end
     end,
@@ -720,6 +731,13 @@ function M.submit_review_with_comments(pr_number, event, body, comments, callbac
           end)
         end,
       })
+
+      if not job_id or job_id <= 0 then
+        vim.schedule(function()
+          callback(false, "Failed to start job for review submission")
+        end)
+        return
+      end
 
       vim.fn.chansend(job_id, review_json)
       vim.fn.chanclose(job_id, "stdin")
@@ -850,6 +868,13 @@ function M.add_review_comment(pr_number, path, line, body, callback, start_line)
         end,
       })
 
+      if not job_id or job_id <= 0 then
+        vim.schedule(function()
+          callback(false, "Failed to start job for review comment")
+        end)
+        return
+      end
+
       vim.fn.chansend(job_id, json_body)
       vim.fn.chanclose(job_id, "stdin")
     end,
@@ -880,6 +905,13 @@ function M.reply_to_comment(pr_number, comment_id, body, callback)
     end,
   })
 
+  if not job_id or job_id <= 0 then
+    vim.schedule(function()
+      callback(false, "Failed to start job for comment reply")
+    end)
+    return
+  end
+
   vim.fn.chansend(job_id, json_body)
   vim.fn.chanclose(job_id, "stdin")
 end
@@ -906,6 +938,13 @@ function M.edit_comment(pr_number, comment_id, body, callback)
       end)
     end,
   })
+
+  if not job_id or job_id <= 0 then
+    vim.schedule(function()
+      callback(false, "Failed to start job for comment edit")
+    end)
+    return
+  end
 
   vim.fn.chansend(job_id, json_body)
   vim.fn.chanclose(job_id, "stdin")
@@ -982,6 +1021,13 @@ local function create_pending_review_with_comments(pr_number, commit_id, comment
       end)
     end,
   })
+
+  if not job_id or job_id <= 0 then
+    vim.schedule(function()
+      callback(false, "Failed to start job for pending review")
+    end)
+    return
+  end
 
   vim.fn.chansend(job_id, review_body)
   vim.fn.chanclose(job_id, "stdin")
@@ -1299,6 +1345,13 @@ function M.add_comment_reaction(comment_id, content, callback)
       end)
     end,
   })
+
+  if not job_id or job_id <= 0 then
+    vim.schedule(function()
+      callback(false, "Failed to start job for reaction")
+    end)
+    return
+  end
 
   vim.fn.chansend(job_id, json_body)
   vim.fn.chanclose(job_id, "stdin")

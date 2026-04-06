@@ -4068,6 +4068,7 @@ function M.list_global_comments()
 
           -- Extract only the reply part (everything after "## Your Reply:")
           local reply_start = full_text:find("## Your Reply:")
+          local reply_text
           if not reply_start then
             -- Fallback: use the entire text if marker not found
             reply_text = full_text
