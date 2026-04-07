@@ -159,12 +159,17 @@ function M.list_review_requests(callback)
           pr.number
         )
 
+        local viewed_data_buffer = {}
         vim.fn.jobstart(viewed_cmd, {
           stdout_buffered = true,
           on_stdout = function(_, viewed_data)
+            viewed_data_buffer = viewed_data or {}
+          end,
+          on_exit = function(_, code)
             local is_viewed = false
-            if viewed_data and viewed_data[1] then
-              is_viewed = viewed_data[1] == "true"
+
+            if code == 0 and viewed_data_buffer and viewed_data_buffer[1] then
+              is_viewed = viewed_data_buffer[1] == "true"
             end
 
             -- For fork PRs, use the full reference including owner
@@ -213,35 +218,6 @@ function M.list_review_requests(callback)
               vim.schedule(function()
                 callback(formatted, nil)
               end)
-            end
-          end,
-          on_exit = function(_, code)
-            if code ~= 0 then
-              pending = pending - 1
-              table.insert(formatted, {
-                number = pr.number,
-                title = pr.title,
-                head_branch = pr.headRefName,
-                base_branch = pr.baseRefName,
-                author = pr.author and pr.author.login or "unknown",
-                updated_at = pr.updatedAt,
-                additions = pr.additions or 0,
-                deletions = pr.deletions or 0,
-                viewed = false,
-              })
-
-              if pending == 0 then
-                table.sort(formatted, function(a, b)
-                  if a.viewed ~= b.viewed then
-                    return not a.viewed
-                  end
-                  return a.number > b.number
-                end)
-
-                vim.schedule(function()
-                  callback(formatted, nil)
-                end)
-              end
             end
           end,
         })

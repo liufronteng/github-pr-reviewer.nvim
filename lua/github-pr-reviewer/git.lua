@@ -358,14 +358,14 @@ function M.cleanup_review(review_branch, target_branch, callback)
     end
     local pending = #new_paths
     for _, path in ipairs(new_paths) do
-      vim.fn.jobstart("rm -rf " .. path, {
-        on_exit = function()
-          pending = pending - 1
-          if pending == 0 then
-            vim.schedule(next_callback)
-          end
-        end,
-      })
+      -- Remove surrounding quotes from shellescape before passing to delete()
+      local clean_path = path:gsub("^'", ""):gsub("'$", "")
+      -- Use vim.fn.delete for cross-platform compatibility (works on Windows too)
+      pcall(vim.fn.delete, clean_path, "rf")
+      pending = pending - 1
+      if pending == 0 then
+        vim.schedule(next_callback)
+      end
     end
   end
 
